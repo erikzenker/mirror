@@ -34,7 +34,7 @@ void sendString(tcp::socket &socket, const std::string string);
  * @param host url of host
  * @param port port number on which the host is reachable
  */
-void sendFile(const boost::filesystem::path path, const std::string host, const std::string port);
+void sendFile(const boost::filesystem::path rootPath, const boost::filesystem::path path, const std::string host, const std::string port);
 
 
 void mkdir(const boost::filesystem::path rootPath, const boost::filesystem::path path, const std::string host, const std::string port);
@@ -77,6 +77,13 @@ std::string recvString(tcp::socket &socket);
  */
 std::string recvString(tcp::socket &socket, const size_t size);
 
+/***
+ * @brief Waits on port for incoming messages
+ *
+ * @param port is the port to listen on
+ * @return std::tuple of (header, body)
+ */
+std::tuple<std::string, std::string> recvMessage(const unsigned port);
 
 /***
  * @brief Waits on port for incoming files
@@ -94,4 +101,4 @@ std::tuple<std::string, std::string> recvFile(const unsigned port);
  * @param port is the port to listen on
  * @param callback rootPath, fileName, fileContent
  **/
-void asyncRecvFile(const unsigned port, void (*callback)(std::string, std::string, std::string));
+//void asyncRecvFile(const unsigned port, void (*callback)(std::string, std::string, std::string));

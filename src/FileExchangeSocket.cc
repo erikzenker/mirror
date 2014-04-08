@@ -16,18 +16,14 @@
 
 using boost::asio::ip::tcp;
 
-tcp::socket getSocket(const std::string host, const std::string port){
-  // Connect to socket
-  boost::asio::io_service io_service; 
-  tcp::resolver resolver(io_service); 
-  tcp::resolver::query url(host, port);
-  tcp::resolver::iterator endpoint_iterator = resolver.resolve(url);
-  tcp::socket socket(io_service);
-  boost::asio::connect(socket, endpoint_iterator);
-
-  return socket;
+/*************************************************************************
+ *  UTILITIES                                                            *
+ *                                                                       *
+ *                                                                       *
+ *************************************************************************/
+boost::filesystem::path constructRelativePath(const boost::filesystem::path rootPath, boost::filesystem::path fullPath){
+	return fullPath.string().substr(rootPath.string().length(), fullPath.string().length());
 }
-
 
 size_t fileSize(boost::filesystem::path path){
   std::ifstream file(path.c_str(), std::ios::in  | std::ios::binary | std::ios::ate);
@@ -42,14 +38,16 @@ size_t fileSize(boost::filesystem::path path){
  *                                                                       *
  *                                                                       *
  *************************************************************************/
-std::string messageHeader(boost::filesystem::path path){
+std::string fileHeader(boost::filesystem::path rootPath, boost::filesystem::path path){
   const size_t file_size  = fileSize(path);
 
   std::stringstream header;
   header << "<transmission >" << std::endl;
   header << "<type>file</type>" << std::endl;
   header << "<filename>" << path.filename().string() << "</filename>" << std::endl;
+  header << "<rootPath>" << rootPath.string() << "</rootPath>" << std::endl;
   header << "<path>" << path.parent_path().string() << "</path>" << std::endl;
+  header << "<relativePath>" << constructRelativePath(rootPath, path).string() << "</relativePath>" << std::endl;
   header << "<size>" << file_size << "</size>" << std::endl;
   header << "<md5sum>" << "" << "</md5sum>" << std::endl;
   header << "</transmission>" << std::endl;
@@ -61,16 +59,17 @@ std::string mkdirHeader(boost::filesystem::path rootPath, boost::filesystem::pat
   std::stringstream header;
   header << "<transmission>" << std::endl;
   header << "<type>mkdir</type>" << std::endl;
-  header << "<rootPath>" << rootPath.filename().string() << "</filename>" << std::endl;
-  header << "<path>" << path.parent_path().string() << "</path>" << std::endl;
+  header << "<rootPath>" << rootPath.string() << "</rootPath>" << std::endl;
+  header << "<path>" << path.string() << "</path>" << std::endl;
+  header << "<relativePath>" << constructRelativePath(rootPath, path).string() << "</relativePath>" << std::endl;
+  header << "<size>" << 0 << "</path>" << std::endl;
   header << "</transmission>" << std::endl;
 
   return header.str();
   
 }
 
-
-std::string messageBody(boost::filesystem::path path){
+std::string fileBody(boost::filesystem::path path){
   std::ifstream file(path.c_str(), std::ios::in  | std::ios::binary | std::ios::ate);
   const size_t file_size  = file.tellg();
 
@@ -95,14 +94,6 @@ std::string messageBody(boost::filesystem::path path){
  *                                                                       *
  *                                                                       *
  *************************************************************************/
-void sendString(tcp::socket &socket, const std::string string){
-  const size_t size = string.size();
-  std::stringstream ss;
-  ss << string;
-
-  sendStream(socket, ss, size);
-}
-
 void sendStream(tcp::socket &socket, std::istream &stream,  const size_t size){
   size_t transferred = 0;
   boost::array<char, CHUNK_SIZE> chunk;
@@ -117,21 +108,34 @@ void sendStream(tcp::socket &socket, std::istream &stream,  const size_t size){
 
 }
 
-void sendFile(const boost::filesystem::path path, const std::string host, const std::string port){
-  // Create socket connection
-  tcp::socket socket = getSocket(host, port);
+void sendString(tcp::socket &socket, const std::string string){
+  const size_t size = string.size();
+  std::stringstream ss;
+  ss << string;
+
+  sendStream(socket, ss, size);
+}
+
+void sendFile(const boost::filesystem::path rootPath, const boost::filesystem::path path, const std::string host, const std::string port){
+  // Connect to socket
+  boost::asio::io_service io_service; 
+  tcp::resolver resolver(io_service); 
+  tcp::resolver::query url(host, port);
+  tcp::resolver::iterator endpoint_iterator = resolver.resolve(url);
+  tcp::socket socket(io_service);
+  boost::asio::connect(socket, endpoint_iterator);
 
   // Prepare XML-Header and Body
-  const std::string header = messageHeader(path); 
-  const std::string body   = messageBody(path);
+  const std::string header = fileHeader(rootPath, path); 
+  const std::string body   = fileBody(path);
 
   std::cout << "Sending to " 
-	    << socket.remote_endpoint().address() 
-	    << ":" 
-	    << socket.remote_endpoint().port() 
-	    << " " 
-	    << path.filename().string() 
-	    << " (" << body.size() << " Bytes)"<<std::endl;
+  	    << socket.remote_endpoint().address() 
+  	    << ":" 
+  	    << socket.remote_endpoint().port() 
+  	    << " " 
+  	    << path.filename().string() 
+  	    << " (" << body.size() << " Bytes)"<<std::endl;
   std::cout << header << std::endl;
 
   // Send header
@@ -140,8 +144,13 @@ void sendFile(const boost::filesystem::path path, const std::string host, const 
 }
 
 void mkdir(const boost::filesystem::path rootPath, const boost::filesystem::path path, const std::string host, const std::string port){
-  // Create socket connection
-  tcp::socket socket = getSocket(host, port);
+  // Connect to socket
+  boost::asio::io_service io_service; 
+  tcp::resolver resolver(io_service); 
+  tcp::resolver::query url(host, port);
+  tcp::resolver::iterator endpoint_iterator = resolver.resolve(url);
+  tcp::socket socket(io_service);
+  boost::asio::connect(socket, endpoint_iterator);
 
   std::cout << "Mkdir on " 
 	    << socket.remote_endpoint().address() 
@@ -229,7 +238,7 @@ std::string recvString(tcp::socket &socket, const size_t size){
 
 }
 
-std::tuple<std::string, std::string> recvFile(const unsigned port){
+std::tuple<std::string, std::string> recvMessage(const unsigned port){
   // Create socket
   boost::asio::io_service io_service;
   tcp::endpoint endpoint(tcp::v4(), port);
@@ -251,9 +260,7 @@ std::tuple<std::string, std::string> recvFile(const unsigned port){
   boost::property_tree::ptree ptree;
   read_xml(header, ptree);
 
-  const std::string     type = ptree.get<std::string>("transmisison.type");
   const size_t          size = ptree.get<size_t>("transmission.size");
-  const std::string filename = ptree.get<std::string>("transmission.filename");
 
   // Receive body (binary data)
   std::string body("");
@@ -263,18 +270,34 @@ std::tuple<std::string, std::string> recvFile(const unsigned port){
   else{
     body = body + post;
   }
-
-  std::cout << "Receive from " 
+  std::cout << "Received message from " 
 	    << socket.remote_endpoint().address() 
 	    << ":" 
 	    << socket.remote_endpoint().port() 
 	    << " " 
-	    << filename 
-	    << " (" << body.size() << " Bytes)" << std::endl;
+	    << " (" << header.str().size() + body.size() << " Bytes)" << std::endl;
+
+  return std::make_tuple(header.str(), body);
+}
+
+std::tuple<std::string, std::string> recvFile(const unsigned port){
+  // Receive message
+  std::string header, body;
+  std::tie(header, body) = recvMessage(port);
+
+  std::stringstream headerStream;
+  headerStream << header;
+
+  // Get filename from xml
+  boost::property_tree::ptree ptree;
+  read_xml(headerStream, ptree);
+  const std::string filename = ptree.get<std::string>("transmission.filename");
 
   return std::make_tuple(body, filename);
 
 }
+
+
 
 void asyncRecvFile(const unsigned port, void (*callback)(std::string, std::string, std::string)){
 

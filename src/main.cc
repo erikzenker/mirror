@@ -4,6 +4,8 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/asio.hpp>
+#include <boost/property_tree/xml_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -25,13 +27,34 @@ void stringToFile(const std::string s, const boost::filesystem::path path){
 void recvLoop(const boost::filesystem::path rootPath, const unsigned port, Inotify &inotify){
 
   while(true){
-    std::string fileContent("");
-    std::string filename("");
-    std::tie(fileContent, filename) = recvFile(port);
-      
-    // Write Content to file
-    inotify.ignoreFileOnce(filename);
-    stringToFile(fileContent, rootPath / filename);
+    // Receive message
+    std::string header, body;
+    std::tie(header, body) = recvMessage(port);
+    
+    // Get message type
+    std::stringstream headerStream;
+    headerStream << header;
+    boost::property_tree::ptree ptree;
+    read_xml(headerStream, ptree);
+    const std::string type = ptree.get<std::string>("transmission.type");
+
+    // Switch on message type
+    if(!type.compare("file")){
+      // Write Content to file
+      const std::string relativePath = ptree.get<std::string>("transmission.relativePath");
+      inotify.ignoreFileOnce(relativePath);
+      stringToFile(body, rootPath / relativePath);
+      inotify.watchDirectoryRecursively(rootPath / relativePath);
+
+    }
+    else if(!type.compare("mkdir")){
+      // Mkdir
+      const std::string relativePath = ptree.get<std::string>("transmission.relativePath");
+      inotify.ignoreFileOnce(relativePath);
+      boost::filesystem::create_directories(rootPath / relativePath);
+      inotify.watchDirectoryRecursively(rootPath / relativePath);
+
+    }
   }
 
 }
@@ -64,15 +87,18 @@ int main(int argc, char* argv[]){
     case IN_CLOSE_WRITE :
       std::cerr << "Send file: " << event.getPath().string() << std::endl;
       try {
-	sendFile(event.getPath(), otherHost, otherPort);
+	sendFile(watchPath, event.getPath(), otherHost, otherPort);
       }
       catch(std::exception e){
 	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-	sendFile(event.getPath(), otherHost, otherPort);
+	sendFile(watchPath, event.getPath(), otherHost, otherPort);
       }
       break;
-    // case IN_CREATE | IN_ISDIR:
-    //   mkdir(watchPath, event.getPath(), otherHost, otherPort);
+
+    case IN_CREATE | IN_ISDIR:
+      mkdir(watchPath, event.getPath(), otherHost, otherPort);
+      break;
+      
 
     default:
       break;
